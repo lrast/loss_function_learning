@@ -6,6 +6,8 @@ from transformers import AutoModelForImageClassification, ViTConfig, ViTMAEForPr
 from transformers.modeling_outputs import ImageClassifierOutput
 
 from torchvision.transforms.v2 import Normalize, Compose, ToDtype
+from safetensors import safe_open
+from typing import Optional
 
 
 class CustomMAE(ViTMAEForPreTraining):
@@ -42,11 +44,11 @@ class ClassifierWithTTA(torch.nn.Module):
             classifier_hidden_layers number of ViT layers on top of that 
         
         Used as follows:
-             1. This model is trained and use`d as a classifier.
+             1. This model is trained and used as a classifier.
              2. TTA is performed by training the embedding model directly.
              3. Both models expect torch tensors pixel encoded as uint8
     """
-    def __init__(self, classifier_hidden_layers=12, classifier_kwargs={},
+    def __init__(self, classifier_hidden_layers=2, classifier_kwargs={},
                  embedding_kwargs={}):
         super().__init__()
 
@@ -103,6 +105,51 @@ class ClassifierWithTTA(torch.nn.Module):
     def unfreeze_all(self):
         for parameter in self.parameters():
             parameter.requires_grad = True
+
+    def load(self, path: str, device: Optional[str] = None) -> None:
+        """
+        Load model weights from a file
+        
+        Args:
+            path (str): Path to the weights file
+            device (str, optional): Device to map the loaded weights to
+        """
+        try:
+            # Load the state dict from the file
+            state_dict = {}
+            with safe_open(f'{path}/model.safetensors', framework="pt", device=device) as f:
+                for key in f.keys():
+                    state_dict[key] = f.get_tensor(key)
+
+            # Load the state dict into the model
+            self.load_state_dict(state_dict)
+            print(f"Successfully loaded weights from {path}")
+            
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Weights file not found: {path}")
+        except Exception as e:
+            raise RuntimeError(f"Error loading weights from {path}: {str(e)}")
+    
+    @classmethod
+    def load_from_file(cls, path: str, classifier_hidden_layers: int = 2,
+                       device: Optional[str] = None,
+                       ):
+        """
+        Class method to create a model instance and load weights from a file.
+        This allows calling NeuralNetworkModel.load_from_file(path) without creating an instance first.
+        
+        Args:
+            path (str): Path to the weights file
+            map_location (str, optional): Device to map the loaded weights to
+
+            
+        Returns:
+            NeuralNetworkModel: Model instance with loaded weights
+        """
+        model = cls(classifier_hidden_layers)
+        model.load(path, device)
+        
+        return model
 
 
 def make_online_transform(transform):

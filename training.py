@@ -51,14 +51,6 @@ def probing_trainer(model, train_dataset, val_dataset, **kwargs):
 
     training_args = TrainingArguments(**args_filter(all_args, TrainingArguments))
 
-    # potential future implementation
-    #optimizer = AdamW(model.parameters(), **args_filter(all_args, AdamW))
-
-    #lr_scheduler = get_cosine_with_min_lr_schedule_with_warmup(
-    #    optimizer=optimizer,
-    #    **args_filter(all_args, get_cosine_with_min_lr_schedule_with_warmup)
-    #)
-
     trainer = Trainer(model,
                       args=training_args,
                       train_dataset=train_dataset,
@@ -99,14 +91,6 @@ def full_trainer_classification(model, train_dataset, val_dataset, **kwargs):
 
     training_args = TrainingArguments(**args_filter(all_args, TrainingArguments))
 
-    # potential future implementation
-    #optimizer = AdamW(model.parameters(), **args_filter(all_args, AdamW))
-
-    #lr_scheduler = get_cosine_with_min_lr_schedule_with_warmup(
-    #    optimizer=optimizer,
-    #    **args_filter(all_args, get_cosine_with_min_lr_schedule_with_warmup)
-    #)
-
     trainer = Trainer(model,
                       args=training_args,
                       train_dataset=train_dataset,
@@ -114,6 +98,53 @@ def full_trainer_classification(model, train_dataset, val_dataset, **kwargs):
                       data_collator=raw_batch_collator,
                       compute_metrics=compute_metrics,
                       )
+    return trainer
+
+
+def decoder_synchronization_training(model, train_dataset, val_dataset, **kwargs):
+    """ Trainer to synchronize the decoder representation with learned encoder
+        represetation to prevent old decoder representations from influencing TTA
+        learning
+    """
+
+    def sync_collator(data):
+        return {'pixel_values': model.preprocess(torch.stack([ele[0] for ele in data]))
+                }
+
+    embedding_model = model.embedding
+
+    # freeze / unfreeze parameters
+    for parameter in embedding_model.vit.parameters():
+        parameter.requires_grad = False
+    for parameter in embedding_model.decoder.parameters():
+        parameter.requires_grad = True
+
+    kwarg_defaults = {
+        'num_train_epochs': 3,
+
+        'logging_steps': 50,
+        'logging_strategy': "steps",
+
+        'eval_strategy': "epoch",
+        'save_total_limit': 1,
+        'eval_accumulation_steps': 16,
+
+        'output_dir': 'initial_train',
+    }
+
+    all_args = {**kwarg_defaults, **kwargs}
+
+    training_args = TrainingArguments(**args_filter(all_args, TrainingArguments))
+
+    trainer = Trainer(embedding_model,
+                      args=training_args,
+                      train_dataset=train_dataset,
+                      eval_dataset=val_dataset,
+                      data_collator=sync_collator
+                      )
+
+    trainer.can_return_loss = True
+
     return trainer
 
 
@@ -136,9 +167,11 @@ def test_time_adaptation(model, inputs, labels=None,
     # setup
     if f'{model.embedding.device}' != device:
         model = model.to(device)
-    embedding_model = model.embedding
 
+    embedding_model = model.embedding
     embedding_model.enable_masking(mask_ratio)
+    for parameter in embedding_model.parameters():
+        parameter.requires_grad = True
 
     train_data = model.preprocess(inputs)
     inputs = inputs.to(device)

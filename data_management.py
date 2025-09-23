@@ -13,6 +13,9 @@ from torch.utils.data import TensorDataset, random_split
 
 def fetch_dataset_from_hf(dataset_name='zh-plus/tiny-imagenet',
                           processor_name='facebook/vit-mae-base'):
+    """ Load huggingface dataset into memory and return corresponding
+        pytorch DataSet
+    """
     dataset = datasets.load_dataset(dataset_name)
     processor_initial = ViTImageProcessor.from_pretrained(processor_name,
                                                           do_convert_rgb=True,
@@ -103,3 +106,9 @@ def consistent_subset(dataset, count=1000, seed=42):
         inds.extend(locations[loc_i].tolist())
 
     return torch.utils.data.TensorDataset(dataset.tensors[0][inds].clone(), dataset.tensors[1][inds].clone())
+
+
+
+
+
+
