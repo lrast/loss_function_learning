@@ -1,5 +1,4 @@
 # generates TTA curves
-from evaluate.evaluation_suite import evaluator
 import numpy as np
 
 from training import test_time_adaptation
@@ -21,13 +20,13 @@ def TTA_curve(path, dataset, classifier_hidden_layers=2,
 
     model = ClassifierWithTTA(classifier_hidden_layers=classifier_hidden_layers)
 
-    results = np.zeros( steps // evaluate_freq + 1)
+    results = np.zeros(steps // evaluate_freq + 1)
 
     for i in range(len(dataset)):
         model.load_state_dict(state_dict)
 
-        inputs = dataset.tensors[0][i][None, :, :, :]
-        labels = dataset.tensors[1][i]
+        inputs = dataset[i][0][None, :, :, :]
+        labels = dataset[i][1]
 
         sample = test_time_adaptation(model, inputs, labels=labels,
                                       steps=steps, evaluate_freq=evaluate_freq,

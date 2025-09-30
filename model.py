@@ -12,7 +12,7 @@ from typing import Optional
 
 class CustomMAE(ViTMAEForPreTraining):
     """ MAE wrapped that performs
-        (TDI) custom loss functions
+        (TODO) custom loss functions
 
         Important note: requires preprocessed images.
     """
