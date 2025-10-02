@@ -2,18 +2,20 @@
 
 import torch
 import weakref
+import pytorch_lightning as pl
 
 from transformers import ViTConfig
-import pytorch_lightning as pl
+from transformers.utils import ModelOutput
 from transformers.models.vit.modeling_vit import ViTEncoder
 
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset,  DataLoader
+
+from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.callbacks import ModelCheckpoint
+
 
 from dataclasses import dataclass
 from typing import Optional
-from transformers.utils import ModelOutput
-
-from transformers import Trainer, TrainingArguments
 
 
 @dataclass
@@ -23,14 +25,13 @@ class GradientModelOutput(ModelOutput):
     """
     predictions: torch.FloatTensor = None 
     loss: Optional[torch.FloatTensor] = None
-    labels: Optional[torch.LongTensor] = None
 
 
-class EmbeddingToGradient(torch.nn.Module):
+class EmbeddingToGradient(pl.LightningModule):
     """EmbeddingToGradient: Transformer model that directly maps
     image embeddings to loss function gradients
     """
-    def __init__(self, num_hidden_layers=2):
+    def __init__(self, num_hidden_layers=2, classifier_model=None, step_size=1E-1):
         super().__init__()
         config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224",
@@ -40,29 +41,115 @@ class EmbeddingToGradient(torch.nn.Module):
             label2id=None
         )
 
-        self.main_input_name = "embeddings"
-
         self.local_gradient_approximation = ViTEncoder(config)
-        self.loss = torch.nn.MSELoss()
+        self.decoder = torch.nn.Sequential(torch.nn.Linear(768, 768),
+                                           torch.nn.ReLU(),
+                                           torch.nn.Linear(768, 768)
+                                           )
 
-    def forward(self, embeddings, targets=None, labels=None):
+        self.loss = torch.nn.L1Loss()
+
+        self.main_input_name = "embeddings"
+        self.classifier_model = classifier_model
+        self.step_size = step_size
+
+    def forward(self, embeddings, targets=None):
         raw_outputs = self.local_gradient_approximation(embeddings)
+        predictions = self.decoder(raw_outputs.last_hidden_state)
 
         loss = None
         if targets is not None:
-            loss = self.loss(raw_outputs.last_hidden_state, targets)
+            loss = self.loss(predictions / torch.norm(predictions, dim=(1, 2))[:, None, None],
+                             targets / torch.norm(targets, dim=(1, 2))[:, None, None])
 
         return GradientModelOutput(
-                                   predictions=raw_outputs.last_hidden_state,
-                                   loss=loss,
-                                   labels=labels
+                                   predictions=predictions,
+                                   loss=loss
                                   )
 
+    def training_step(self, batch, batchid=None):
+        embedding, gradients = map(lambda x: x.squeeze(), batch)
 
+        loss = self.forward(embedding, gradients).loss
+        self.log("train/loss", loss.item(), on_epoch=False, prog_bar=True)
+        return loss
+
+    def validation_step(self, batch, batchid=None):
+        """Validation metrics that track the impact of gradient of classification
+        performance.
+        """
+        embedding, gradient_gt, labels = map(lambda x: x.squeeze(), batch)
+        outputs = self.forward(embedding, targets=gradient_gt)
+
+        gradient_pred = outputs.predictions
+        loss = outputs.loss
+
+        self.log("eval/loss", loss, prog_bar=True)
+
+        if self.classifier_model is not None:
+            perturbed_embedding = embedding - self.step_size * gradient_pred
+
+            baseline_probs = classification_output(self.classifier_model, embedding)
+            perturbed_probs = classification_output(self.classifier_model, perturbed_embedding)
+
+            label_probs_baseline = baseline_probs[range(len(labels)), labels.tolist()]
+            label_probs_perturbed = perturbed_probs[range(len(labels)), labels.tolist()]
+
+            base_class = baseline_probs.argmax(1)
+            perturbed_class = perturbed_probs.argmax(1)
+
+            frac_improved = (label_probs_perturbed > label_probs_baseline).sum() / embedding.shape[0]
+            dCorrect = ((perturbed_class == labels).sum() - (base_class == labels).sum()) / embedding.shape[0]
+
+            self.log("eval/improved_probability", frac_improved)
+            self.log("eval/improved_classification", dCorrect)
+
+    def configure_optimizers(self):
+        """Hugging Face-style AdamW with parameter groups excluding bias and
+        LayerNorm from weight decay"""
+        learning_rate = 5e-5
+        weight_decay = 0.01
+        betas = (0.9, 0.999)
+        eps = 1e-8
+
+        decay_parameters = []
+        no_decay_parameters = []
+
+        for name, param in self.named_parameters():
+            if not param.requires_grad:
+                continue
+            if name.endswith("bias") or name.endswith("LayerNorm.weight"):
+                no_decay_parameters.append(param)
+            else:
+                decay_parameters.append(param)
+
+        param_groups = [
+            {"params": decay_parameters, "weight_decay": weight_decay},
+            {"params": no_decay_parameters, "weight_decay": 0.0},
+        ]
+
+        optimizer = torch.optim.AdamW(
+            param_groups,
+            lr=learning_rate,
+            betas=betas,
+            eps=eps,
+        )
+
+        return optimizer
+
+
+def classification_output(classifier_model: torch.nn.Module, embeddings: torch.Tensor
+                          ) -> torch.Tensor: 
+    x = classifier_model.classifier.vit.encoder(embeddings).last_hidden_state
+    x = classifier_model.classifier.vit.layernorm(x)[:, 0, :]
+    logits = classifier_model.classifier.classifier(x)
+
+    sm_outputs = torch.nn.functional.softmax(logits, dim=1)
+    return sm_outputs
 
 
 class BatchRecorder:
-    """BatchRecorder: records input, gradient pairs for the module specified """
+    """BatchRecorder: records input, gradient pairs for the module specified"""
     def __init__(self, module):
         self.batch = None
         self.hooks = module.register_forward_hook(self.hook_fn)
@@ -71,7 +158,6 @@ class BatchRecorder:
     def hook_fn(self, module, input, output):
         """Forward hook: attaches a gradient hook to the module's output."""
         out = output.last_hidden_state
-
         # Capture the forward output (detach so it’s not tied to graph)
         out_detached = out.detach().clone()
 
@@ -96,10 +182,13 @@ class ActivityGradientDataDict:
         recorder = BatchRecorder(module)
         self.datasets = {
             "train": ActivityGradientDataset(model, recorder, train_data,
+                                             return_labels=False,
                                              **kwargs),
         }
         if val_data is not None:
-            self.datasets["val"] = ActivityGradientDataset(model, recorder, val_data,
+            self.datasets["val"] = ActivityGradientDataset(model, recorder,
+                                                           val_data,
+                                                           return_labels=True,
                                                            **kwargs)
 
     def __getitem__(self, key):
@@ -114,7 +203,7 @@ class ActivityGradientDataset(IterableDataset):
     """
     def __init__(self, model, recorder, raw_inputs,
                  batch_size=8, shuffle=True, rand_seed=42,
-                 device=None
+                 device=None, return_labels=False
                  ):
         super(ActivityGradientDataset).__init__()
 
@@ -132,6 +221,7 @@ class ActivityGradientDataset(IterableDataset):
         self.batch_size = batch_size
         self.shuffle = shuffle
         self.device = device
+        self.return_labels = return_labels
 
     def __iter__(self):
         if self.shuffle:
@@ -143,18 +233,27 @@ class ActivityGradientDataset(IterableDataset):
                    for i in range(0, len(self.raw_inputs), self.batch_size)
                    ]
 
-        for batch_inds in batches:
-            # Forward and backward passes through the network
-            images, labels = self.raw_inputs[batch_inds]
-            images = self.model.preprocess(images).to(self.device)
-            outs = self.model.forward(images, labels=labels.to(self.device))
-            outs.loss.backward()
+        with torch.enable_grad():
+            for batch_inds in batches:
+                # Forward and backward passes through the network
+                images, labels = self.raw_inputs[batch_inds]
+                images = self.model.preprocess(images).to(self.device)
+                images.requires_grad = True
+                outs = self.model.forward(images, labels=labels.to(self.device))
+                outs.loss.backward()
 
-            yield (*self.recorder.batch, labels)
+                if self.return_labels:
+                    yield (*self.recorder.batch, labels)
+                else:
+                    yield self.recorder.batch
 
 
-def make_gradient_trainer(classifier_model, gradient_model, train, val,
+def make_gradient_trainer(classifier_model, gradient_model,
+                          images_train, images_val, 
+                          project_name='TTA_loss', run_name='debug',
+                          checkpoint_directory='debug',
                           epochs=10, step_size=1E-1, **kwargs):
+    """Make a pytorch lightgning trainer for the gradient model"""
 
     default_ds_args = {
                         'batch_size': 8,
@@ -163,78 +262,39 @@ def make_gradient_trainer(classifier_model, gradient_model, train, val,
                         'device': 'mps'
                         }
     ds_args = {k: kwargs.pop(k, v) for k, v in default_ds_args.items()}
-    activity_ds = ActivityGradientDataDict(classifier_model, classifier_model.embedding.vit,
-                                           train, val,
-                                           **default_ds_args)
+    activity_ds = ActivityGradientDataDict(
+        classifier_model, classifier_model.embedding.vit,
+        images_train,  images_val,
+        **ds_args
+    )
 
-    default_train_args = {
-                          'learning_rate': 5E-5,
-                          'num_train_epochs': epochs,
-                          'max_steps': epochs * len(train) // ds_args['batch_size'],
-                          'per_device_train_batch_size': 1,
+    # DataLoaders
+    train_loader = DataLoader(activity_ds['train'], batch_size=1)
+    val_loader = DataLoader(activity_ds['val'], batch_size=1)
 
-                          'weight_decay': 0.01,
+    # Set up PyTorch Lightning Trainer
+    default_trainer_args = {
+        'max_epochs': epochs,
+        'accelerator': 'auto',
+        'log_every_n_steps': 20,
+        'enable_progress_bar': True,
+    }
+    trainer_args = {**default_trainer_args, **kwargs}
+    checkpoint = ModelCheckpoint(
+        dirpath=checkpoint_directory,
+        save_top_k=1,
+        monitor='eval/loss',
+        mode='min',
+        save_last=True,
+        every_n_epochs=1
+    )
 
-                          'lr_scheduler_type': 'constant',
-                          'warmup_ratio': 0.0,
+    wandb_logger = WandbLogger(name=run_name, project=project_name)
 
-                          'logging_steps': 20,
-                          'logging_strategy': "steps",
-                          'output_dir': 'gradient_overfit_large',
+    pl_trainer = pl.Trainer(
+        **trainer_args,
+        logger=[wandb_logger],
+        callbacks=[checkpoint]
+    )
 
-                          'include_for_metrics': ['inputs', 'loss'],
-                          'eval_strategy': 'epoch',
-                          'save_total_limit': 1,
-                        }
-    train_args = {**default_train_args, **kwargs}
-    training_args = TrainingArguments(train_args)
-
-    def batch_collator(data):
-        return {'embeddings': data[0][0],
-                'targets': data[0][1],
-                'labels': data[0][2]
-                }
-
-    def classification_output(classifier_model, embeddings): 
-        x = classifier_model.classifier.vit.encoder(embeddings).last_hidden_state
-        x = classifier_model.classifier.vit.layernorm(x)[:, 0, :]
-        logits = classifier_model.classifier.classifier(x)
-
-        sm_outputs = torch.nn.functional.softmax(logits, dim=1)
-        return sm_outputs
-
-    def compute_metrics(preds):
-        """Compute change in loss after a single gradient step"""
-        gradient = torch.as_tensor(preds.predictions[0], device=ds_args['device'])
-        embedding = torch.as_tensor(preds.inputs, device=ds_args['device'])
-        labels = torch.as_tensor(preds.label_ids, device=ds_args['device'])
-
-        perturbed_embedding = embedding - step_size * gradient
-
-        baseline_probs = classification_output(classifier_model, embedding)
-        perturbed_probs = classification_output(classifier_model, perturbed_embedding)
-
-        label_probs_baseline = baseline_probs[range(len(labels)), labels.tolist()]
-        label_probs_perturbed = perturbed_probs[range(len(labels)), labels.tolist()]
-
-        base_class = baseline_probs.argmax(1)
-        perturbed_class = perturbed_probs.argmax(1)
-
-        frac_improved = (label_probs_perturbed > label_probs_baseline).sum() / ds_args['batch_size']
-        dCorrect = ((perturbed_class == labels).sum() - (base_class == labels).sum()) / ds_args['batch_size']
-
-        return {'improved_probability': frac_improved,
-                'improved_classification': dCorrect}
-
-    trainer = Trainer(gradient_model,
-                      args=training_args,
-                      train_dataset=activity_ds['train'],
-                      eval_dataset=activity_ds['val'],
-                      data_collator=batch_collator,
-                      compute_metrics=compute_metrics
-                      )
-    trainer.can_return_loss = True
-
-    return trainer
-
-
+    return pl_trainer, gradient_model, train_loader, val_loader
