@@ -19,16 +19,16 @@ class CustomMAE(ViTMAEForPreTraining):
     def __init__(self, *args, preprocessor=None, **kwargs):
         super().__init__(*args, **kwargs)
 
-    def forward(self, pixel_values, *args, **kwargs):
+    def forward(self, pixel_values):
         """ Full encode-decode cycle on the images """
-        outputs = super().forward(pixel_values, *args, **kwargs)
+        outputs = super().forward(pixel_values)
         # add auxilliary loss functions here
         return outputs
 
-    def embedding(self, pixel_values, *args, **kwargs):
+    def embedding(self, pixel_values):
         """ Run just the forward embedding step of the MAE """
         self.disable_masking()
-        return self.vit(pixel_values, *args, **kwargs).last_hidden_state
+        return self.vit(pixel_values).last_hidden_state
 
     def disable_masking(self):
         self.vit.config.mask_ratio = 0.0
