@@ -1,4 +1,5 @@
-# Files for efficient training
+# Training scripts for TTA models
+
 import torch
 import evaluate
 import inspect

@@ -2,7 +2,8 @@
 
 import torch
 
-from transformers import AutoModelForImageClassification, ViTConfig, ViTMAEForPreTraining, ViTImageProcessor
+from transformers import AutoModelForImageClassification, ViTConfig, \
+                         ViTMAEForPreTraining, ViTImageProcessor
 from transformers.modeling_outputs import ImageClassifierOutput
 
 from torchvision.transforms.v2 import Normalize, Compose, ToDtype

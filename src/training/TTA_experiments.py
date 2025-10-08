@@ -1,8 +1,8 @@
 # generates TTA curves
 import numpy as np
 
-from training import test_time_adaptation
-from model import ClassifierWithTTA
+from .TTA_training import test_time_adaptation
+from ..models.TTA_model import ClassifierWithTTA
 
 from safetensors import safe_open
 
