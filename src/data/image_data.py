@@ -12,36 +12,32 @@ from torch.utils.data import TensorDataset, random_split
 
 
 def fetch_dataset_from_hf(dataset_name='zh-plus/tiny-imagenet',
-                          processor_name='facebook/vit-mae-base'):
+                          processor_name='facebook/vit-mae-base',
+                          split=None):
     """ Load huggingface dataset into memory and return corresponding
         pytorch DataSet
     """
-    dataset = datasets.load_dataset(dataset_name)
+    dataset = datasets.load_dataset(dataset_name, split=split)
     processor_initial = ViTImageProcessor.from_pretrained(processor_name,
                                                           do_convert_rgb=True,
                                                           do_normalize=False,
                                                           do_rescale=False,
                                                           do_resize=True
                                                           )
+
     # avoid using dataset.map for preprocessing: it slows later retrieval.
+    def process_images_in_mem(dataset):
+        img_np = [processor_initial(dataset[i]['image'])['pixel_values'][0]
+                  for i in range(len(dataset))]
+        images = torch.from_numpy(np.stack(img_np))
+        labels = torch.tensor(dataset['label'])
 
-    train_img_np = [processor_initial(dataset['train'][i]['image'])['pixel_values'][0]
-                    for i in range(len(dataset['train']))
-                    ]
-    train_images = torch.from_numpy(np.stack(train_img_np))
+        return torch.utils.data.TensorDataset(images, labels)
 
-    val_img_np = [processor_initial(dataset['valid'][i]['image'])['pixel_values'][0]
-                  for i in range(len(dataset['valid']))
-                  ]
-    val_images = torch.from_numpy(np.stack(val_img_np))
-
-    train_labels = torch.tensor(dataset['train']['label'])
-    val_labels = torch.tensor(dataset['valid']['label'])
-
-    train_dataset = torch.utils.data.TensorDataset(train_images, train_labels)
-    val_dataset = torch.utils.data.TensorDataset(val_images, val_labels)
-
-    return train_dataset, val_dataset
+    if split is None:
+        return process_images_in_mem(dataset['train']), process_images_in_mem(dataset['valid'])
+    else:
+        return process_images_in_mem(dataset)
 
 
 def process_image(image):

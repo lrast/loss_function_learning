@@ -1,0 +1,30 @@
+image_data:
+  dataset_name: zh-plus/tiny-imagenet
+  processor_name: facebook/vit-mae-base
+  split: train
+
+base_model:
+  ckpt: base_models_for_TTA/vit2_full_sync
+
+activity_data:
+  batch_size: 8
+  shuffle: True
+  rand_seed: 42
+  device: mps
+
+loss_model:
+  _name_: gradient
+  params:
+    num_hidden_layers: 2
+    step_size: 1E-1
+
+train:
+  max_epochs: 10
+  run_name: debug
+
+debug:
+  train_as_validation: False
+
+hydra:
+  run:
+    dir: experiments_loss/${now:%Y-%m-%d\(%H:%M:%S\)}-${train.run_name}
