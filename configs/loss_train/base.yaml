@@ -1,7 +1,10 @@
 image_data:
   dataset_name: zh-plus/tiny-imagenet
   processor_name: facebook/vit-mae-base
-  split: train
+  total_size: 10000
+  seed: 42
+  train_fraction: 0.9
+
 
 base_model:
   ckpt: base_models_for_TTA/vit2_full_sync
@@ -9,14 +12,14 @@ base_model:
 activity_data:
   batch_size: 8
   shuffle: True
-  rand_seed: 42
+  seed: 42
   device: mps
 
 loss_model:
   _name_: gradient
   params:
-    num_hidden_layers: 2
-    step_size: 1E-1
+    num_hidden_layers: 6
+    step_size: 100.
 
 train:
   max_epochs: 10

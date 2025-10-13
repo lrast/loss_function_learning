@@ -24,7 +24,7 @@ class EmbeddingToGradient(pl.LightningModule):
     """EmbeddingToGradient: Transformer model that directly maps
     image embeddings to loss function gradients
     """
-    def __init__(self, num_hidden_layers=2, classifier_model=None, step_size=1E-1):
+    def __init__(self, num_hidden_layers=6, classifier_model=None, step_size=100):
         super().__init__()
         config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224",
@@ -52,8 +52,8 @@ class EmbeddingToGradient(pl.LightningModule):
 
         loss = None
         if targets is not None:
-            loss = self.loss(predictions / torch.norm(predictions, dim=(1, 2))[:, None, None],
-                             targets / torch.norm(targets, dim=(1, 2))[:, None, None])
+            # mimic the effects of step size in the loss function
+            loss = self.loss(self.step_size*predictions, self.step_size*targets)
 
         return RegressionModelOutput(
                                    predictions=predictions,
@@ -141,7 +141,7 @@ class EmbeddingToGradient(pl.LightningModule):
 
 class EmbeddingPropagation(pl.LightningModule):
     """EmbeddingPropagation: evolves the Embedding to simulate a gradient step"""
-    def __init__(self, num_hidden_layers=2, classifier_model=None, step_size=1E-1):
+    def __init__(self, num_hidden_layers=6, classifier_model=None, step_size=100):
         super().__init__()
         config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224",

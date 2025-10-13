@@ -62,7 +62,7 @@ class ActivityGradientDataset(IterableDataset):
     raw_inputs: inputs to parent classication_model to iterate over
     """
     def __init__(self, classication_model, recorder, raw_inputs,
-                 batch_size=8, shuffle=True, rand_seed=42,
+                 batch_size=8, shuffle=True, seed=42,
                  device=None, return_labels=False
                  ):
         super(ActivityGradientDataset).__init__()
@@ -78,9 +78,12 @@ class ActivityGradientDataset(IterableDataset):
         self.device = device
         self.return_labels = return_labels
 
+        self.gen = torch.Generator()
+        self.gen.manual_seed(seed)
+
     def __iter__(self):
         if self.shuffle:
-            inds = torch.randperm(len(self.raw_inputs))
+            inds = torch.randperm(len(self.raw_inputs), generator=self.gen)
         else:
             inds = torch.arange(len(self.raw_inputs))
 
