@@ -3,6 +3,8 @@
 import torch
 import pytorch_lightning as pl
 
+from torch import nn
+
 from dataclasses import dataclass
 from typing import Optional
 
@@ -24,7 +26,9 @@ class EmbeddingToGradient(pl.LightningModule):
     """EmbeddingToGradient: Transformer model that directly maps
     image embeddings to loss function gradients
     """
-    def __init__(self, num_hidden_layers=6, classifier_model=None, step_size=100):
+    def __init__(self, num_hidden_layers=6, classifier_model=None, step_size=100,
+                 only_first=False
+                 ):
         super().__init__()
         config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224",
@@ -140,27 +144,59 @@ class EmbeddingToGradient(pl.LightningModule):
 
 
 class EmbeddingPropagation(pl.LightningModule):
-    """EmbeddingPropagation: evolves the Embedding to simulate a gradient step"""
-    def __init__(self, num_hidden_layers=6, classifier_model=None, step_size=100):
+    """EmbeddingPropagation: evolves the Embedding to simulate a gradient step
+
+    Only first: learns only the propagation of the first token in the hidden
+    representaion
+    """
+    def __init__(self, num_hidden_layers=6, classifier_model=None,
+                 step_size=100, only_first=False, lr=5e-5,
+                 FC_model=False
+                 ):
         super().__init__()
-        config = ViTConfig.from_pretrained(
-            "google/vit-base-patch16-224",
-            num_hidden_layers=num_hidden_layers,
-            attn_implementation="eager",  # change this for performance
-            id2label=None,
-            label2id=None
-        )
 
-        self.propagation_model = ViTEncoder(config)
+        if FC_model:
+            print('here')
+            self.propagation_model = nn.Sequential(*(num_hidden_layers*[
+                                                      nn.ReLU(),
+                                                      nn.Linear(768, 768)
+                                                    ])
+                                                   )
 
-        self.loss = torch.nn.MSELoss()
+        else:
+            config = ViTConfig.from_pretrained(
+                "google/vit-base-patch16-224",
+                num_hidden_layers=num_hidden_layers,
+                attn_implementation="eager",  # change this for performance
+                id2label=None,
+                label2id=None
+            )
+
+            self.propagation_model = ViTEncoder(config)
+
+        if only_first:
+            self.loss = lambda inputs, targets: torch.nn.functional.mse_loss(
+                                            inputs[:, 0, :], targets[:, 0, :])
+        else:
+            self.loss = torch.nn.MSELoss()
 
         self.main_input_name = "embeddings"
         self.classifier_model = classifier_model
         self.step_size = step_size
+        self.only_first = only_first
+        self.lr = lr
+        self.FC_model = FC_model
 
     def forward(self, embeddings, targets=None):
-        predictions = self.propagation_model(embeddings).last_hidden_state
+        if self.FC_model:
+            predictions = embeddings.clone()
+            predictions[:, 0, :] = self.propagation_model(embeddings[:, 0, :])
+
+        else:
+            predictions = self.propagation_model(embeddings).last_hidden_state
+
+        if self.only_first:
+            predictions[:, 1:, :] = embeddings[:, 1:, :]
 
         loss = None
         if targets is not None:
@@ -222,7 +258,7 @@ class EmbeddingPropagation(pl.LightningModule):
     def configure_optimizers(self):
         """Hugging Face-style AdamW with parameter groups excluding bias and
         LayerNorm from weight decay"""
-        learning_rate = 5e-5
+        learning_rate = self.lr
         weight_decay = 0.0
         betas = (0.9, 0.999)
         eps = 1e-8

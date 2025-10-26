@@ -20,6 +20,8 @@ loss_model:
   params:
     num_hidden_layers: 6
     step_size: 100.
+    only_first: False
+    lr: 5e-5
 
 train:
   max_epochs: 10

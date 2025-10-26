@@ -23,7 +23,7 @@ def make_trainer(max_epochs=10, run_name='debug', dirpath='debug'):
         every_n_epochs=1
     )
 
-    wandb_logger = WandbLogger(project='TTA_loss', name=run_name,)
+    wandb_logger = WandbLogger(project='TTA_loss', name=run_name)
 
     pl_trainer = pl.Trainer(
         **trainer_args,
