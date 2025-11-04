@@ -13,12 +13,14 @@ from torch.utils.data import TensorDataset, random_split
 
 def balanced_train_subsets(dataset_name='zh-plus/tiny-imagenet',
                            processor_name='facebook/vit-mae-base',
-                           total_size=10000,
+                           total_size=100000,
                            seed=42,
                            train_fraction=0.9
                            ):
     """Loads balanced subsets of training data, and returns them as datasets
     in memory.
+
+    Does not handle train_fraction of 0 or 1 well.
     """
     dataset = datasets.load_dataset(dataset_name, split='train')
 

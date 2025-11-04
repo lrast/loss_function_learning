@@ -1,5 +1,4 @@
 # Training scripts for TTA models
-
 import torch
 import evaluate
 import inspect
@@ -21,11 +20,12 @@ def compute_metrics(eval_preds):
     return metric.compute(predictions=predictions, references=labels)
 
 
-def probing_trainer(model, train_dataset, val_dataset, **kwargs):
+def probing_trainer(model, train_dataset, val_dataset, freeze_cls_token=True,
+                    **kwargs):
     """ Trainer for probing models, that only train the classifier.
         Goal: _good enough_ performance across a range of ViT probing
     """
-    model.freeze_embedding()
+    model.freeze_embedding(freeze_cls_token)
 
     kwarg_defaults = {
         'learning_rate': 5E-5,
@@ -41,11 +41,15 @@ def probing_trainer(model, train_dataset, val_dataset, **kwargs):
 
         'eval_strategy': "epoch",
         'metric_for_best_model': 'eval_accuracy',
+        'greater_is_better': True,
         'save_strategy': "best",
         'save_total_limit': 1,
+        'load_best_model_at_end': True,
 
         'output_dir': 'initial_train',
-        'dataloader_num_workers': 8
+        'dataloader_num_workers': 8,
+        'report_to': "wandb",
+        'dataloader_persistent_workers': True,
     }
 
     all_args = {**kwarg_defaults, **kwargs}
@@ -81,11 +85,15 @@ def full_trainer_classification(model, train_dataset, val_dataset, **kwargs):
 
         'eval_strategy': "epoch",
         'metric_for_best_model': 'eval_accuracy',
+        'greater_is_better': True,
         'save_strategy': "best",
         'save_total_limit': 1,
+        'load_best_model_at_end': True,
 
         'output_dir': 'initial_train',
-        'dataloader_num_workers': 8
+        'dataloader_num_workers': 8,
+        'report_to': "wandb",
+        'dataloader_persistent_workers': True,
     }
 
     all_args = {**kwarg_defaults, **kwargs}
@@ -127,10 +135,16 @@ def decoder_synchronization_training(model, train_dataset, val_dataset, **kwargs
         'logging_strategy': "steps",
 
         'eval_strategy': "epoch",
+        'metric_for_best_model': 'eval_loss',
+        'greater_is_better': False,
+        'save_strategy': "best",
         'save_total_limit': 1,
+        'load_best_model_at_end': True,
+
         'eval_accumulation_steps': 16,
 
         'output_dir': 'initial_train',
+        'report_to': "wandb",
     }
 
     all_args = {**kwarg_defaults, **kwargs}
@@ -141,7 +155,7 @@ def decoder_synchronization_training(model, train_dataset, val_dataset, **kwargs
                       args=training_args,
                       train_dataset=train_dataset,
                       eval_dataset=val_dataset,
-                      data_collator=sync_collator
+                      data_collator=sync_collator,
                       )
 
     trainer.can_return_loss = True

@@ -1,0 +1,33 @@
+data:
+  dataset_name: zh-plus/tiny-imagenet
+  processor_name: facebook/vit-mae-base
+  total_size: 100000
+  seed: 42
+  train_fraction: 0.9
+
+model:
+  classifier_hidden_layers: 2
+
+# setting any sub-training value to null will 
+train:
+  run_name: initial_train_debug
+  probe:
+    disable: False
+    freeze_cls_token: True
+    run_name: ${train.run_name}_probe
+  full:
+    disable: False
+    run_name: ${train.run_name}_full
+  decoder_sync:
+    disable: False
+    run_name: ${train.run_name}_sync
+
+debug:
+  train_as_validation: False
+
+hydra:
+  run:
+    dir: experiments_base/${now:%Y-%m-%d\(%H:%M:%S\)}-${train.run_name}
+  sweep:
+    dir: experiments_base/sweeps/${now:%Y-%m-%d\(%H:%M:%S\)}-${train.run_name}
+    subdir: ${hydra.job.num}

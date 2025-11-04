@@ -6,6 +6,8 @@ from transformers import AutoModelForImageClassification, ViTConfig, \
                          ViTMAEForPreTraining, ViTImageProcessor
 from transformers.modeling_outputs import ImageClassifierOutput
 
+from huggingface_hub import PyTorchModelHubMixin
+
 from torchvision.transforms.v2 import Normalize, Compose, ToDtype
 from safetensors import safe_open
 from typing import Optional
@@ -38,7 +40,7 @@ class CustomMAE(ViTMAEForPreTraining):
         self.vit.config.mask_ratio = mask_ratio
 
 
-class ClassifierWithTTA(torch.nn.Module):
+class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
     """ 
         Classifier model with embedding for TTA.
             The Embedding is from an MAE model, while the classifier places 
@@ -53,17 +55,7 @@ class ClassifierWithTTA(torch.nn.Module):
                  embedding_kwargs={}):
         super().__init__()
 
-        self.embedding = CustomMAE.from_pretrained("facebook/vit-mae-base",
-                                                   **embedding_kwargs)
-        
-        _ = classifier_kwargs.setdefault('num_labels', 200)
-        class_config = ViTConfig.from_pretrained("google/vit-base-patch16-224",
-                                                 num_hidden_layers=classifier_hidden_layers,
-                                                 **classifier_kwargs
-                                                 )
-        self.classifier = AutoModelForImageClassification.from_config(class_config)
-        del self.classifier.vit._modules['embeddings']
-
+        # Processor for the vit model
         processor = ViTImageProcessor.from_pretrained("facebook/vit-mae-base",
                                                       do_convert_rgb=False,
                                                       do_normalize=True,
@@ -73,6 +65,18 @@ class ClassifierWithTTA(torch.nn.Module):
                                                       )
 
         self.preprocess = make_online_transform(processor)
+
+        # Embedding model
+        self.embedding = CustomMAE.from_pretrained("facebook/vit-mae-base",
+                                                   **embedding_kwargs)
+
+        _ = classifier_kwargs.setdefault('num_labels', 200)
+        class_config = ViTConfig.from_pretrained("google/vit-base-patch16-224",
+                                                 num_hidden_layers=classifier_hidden_layers,
+                                                 **classifier_kwargs
+                                                 )
+        self.classifier = AutoModelForImageClassification.from_config(class_config)
+        del self.classifier.vit._modules['embeddings']
 
     def forward(self, pixel_values, labels=None, **kwargs):
         pixel_values = self.preprocess(pixel_values)
@@ -85,10 +89,7 @@ class ClassifierWithTTA(torch.nn.Module):
         if labels is not None:
             loss = self.classifier.loss_function(labels, logits, self.classifier.config, **kwargs)
 
-        return ImageClassifierOutput(
-                                        loss=loss,
-                                        logits=logits
-                                     )
+        return ImageClassifierOutput(loss=loss, logits=logits)
 
     def classify(self, pixel_values):
         return self.forward(pixel_values).logits.argmax(1)
@@ -99,9 +100,12 @@ class ClassifierWithTTA(torch.nn.Module):
     def enable_masking(self, mask_ratio=0.75):
         self.embedding.enable_masking(mask_ratio)
 
-    def freeze_embedding(self):
+    def freeze_embedding(self, freeze_cls_token=True):
         for parameter in self.embedding.parameters():
             parameter.requires_grad = False
+
+        if not freeze_cls_token:
+            self.embedding.vit.embeddings.cls_token.requires_grad = True
 
     def unfreeze_all(self):
         for parameter in self.parameters():
