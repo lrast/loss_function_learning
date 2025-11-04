@@ -1,0 +1,12 @@
+torch>=2.4.0
+transformers>=4.30.0
+datasets>=4.0.0
+numpy>=2.0
+tqdm>=4.60.0
+safetensors>=0.3.0
+evaluate>=0.4.0
+torchvision>=0.15.0
+hydra-core>=1.3.2
+wandb>=0.18.7
+accelerate>=0.26.0
+scikit-learn>=1.4.2
