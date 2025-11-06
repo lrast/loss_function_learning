@@ -18,6 +18,7 @@ from pathlib import Path
 @hydra.main(config_path="../configs/TTA_train", config_name="base", version_base="1.2")
 def main(cfg: DictConfig):
     # Initialize underlying model and data
+    torch.set_float32_matmul_precision('high')
     images_train, images_val = balanced_train_subsets(**cfg.data)
 
     if cfg.debug.train_as_validation:

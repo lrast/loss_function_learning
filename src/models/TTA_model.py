@@ -19,8 +19,9 @@ class CustomMAE(ViTMAEForPreTraining):
 
         Important note: requires preprocessed images.
     """
-    def __init__(self, *args, preprocessor=None, **kwargs):
+    def __init__(self, *args, randomized_CLS=False, **kwargs):
         super().__init__(*args, **kwargs)
+        self.randomized_CLS = randomized_CLS
 
     def forward(self, pixel_values):
         """ Full encode-decode cycle on the images """
@@ -31,7 +32,30 @@ class CustomMAE(ViTMAEForPreTraining):
     def embedding(self, pixel_values):
         """ Run just the forward embedding step of the MAE """
         self.disable_masking()
-        return self.vit(pixel_values).last_hidden_state
+
+        if not self.randomized_CLS:
+            return self.vit(pixel_values).last_hidden_state
+        else:
+            # we need to dig into the guts of the model to randomize cls tokens
+            dtype = pixel_values.dtype
+            patch_embeddings = self.vit.embeddings.patch_embeddings(pixel_values)
+            batch_size, _, hidden_size = patch_embeddings.shape
+
+            if self.randomized_CLS == 'debug':
+                default_token = self.vit.embeddings.cls_token.data
+                cls_token = default_token.repeat((batch_size, 1, 1))
+
+            else:
+                cls_token = torch.randn(batch_size, 1, hidden_size,
+                                        device=self.device, dtype=dtype)
+
+            embedding = torch.cat((cls_token, patch_embeddings), 1)
+            position_embeddings = self.vit.embeddings.position_embeddings
+
+            embedding = embedding + position_embeddings
+            embedding = self.vit.encoder(embedding)
+            embedding = self.vit.layernorm(embedding.last_hidden_state)
+            return embedding
 
     def disable_masking(self):
         self.vit.config.mask_ratio = 0.0
@@ -51,8 +75,8 @@ class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
              2. TTA is performed by training the embedding model directly.
              3. Both models expect torch tensors pixel encoded as uint8
     """
-    def __init__(self, classifier_hidden_layers=2, classifier_kwargs={},
-                 embedding_kwargs={}):
+    def __init__(self, classifier_hidden_layers=2, randomized_CLS=False,
+                 classifier_kwargs={}, embedding_kwargs={}):
         super().__init__()
 
         # Processor for the vit model
@@ -68,6 +92,7 @@ class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
 
         # Embedding model
         self.embedding = CustomMAE.from_pretrained("facebook/vit-mae-base",
+                                                   randomized_CLS=randomized_CLS,
                                                    **embedding_kwargs)
 
         _ = classifier_kwargs.setdefault('num_labels', 200)
