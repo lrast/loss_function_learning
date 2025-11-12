@@ -1,0 +1,19 @@
+# disable hydra logging for analysis runs
+defaults:
+  - _self_
+  - override hydra/hydra_logging: none
+  - override hydra/job_logging: none
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+
+analysis:
+  name: accuracy
+  params: {}
+
+tracked_parameters: null
+stage: sync
+
+

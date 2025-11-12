@@ -34,6 +34,8 @@ def main(cfg: DictConfig):
         else:
             model = ClassifierWithTTA.from_pretrained(input_dir / 'best', **cfg.model)
 
+        train_cfg['load_best_model_at_end'] = True
+
         trainer = get_trainer(model, images_train, images_val,
                               output_dir=output_dir,
                               **train_cfg)

@@ -6,7 +6,7 @@ from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
 
 from src.models.TTA_model import ClassifierWithTTA
-from src.models.loss_models import EmbeddingToGradient, EmbeddingPropagation
+from src.models.loss_models import EmbeddingToGradient, EmbeddingPropagation, ClsTokenPropagation
 
 from src.data.image_data import balanced_train_subsets
 from src.data.activity_data import ActivityGradientDataDict
@@ -17,6 +17,7 @@ from src.training.loss_training import make_trainer
 MODEL_REGISTRY = {
     "gradient": EmbeddingToGradient,
     "propagation": EmbeddingPropagation,
+    "propagation_CLS": ClsTokenPropagation
 }
 
 

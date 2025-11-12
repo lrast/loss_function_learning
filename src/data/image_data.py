@@ -2,6 +2,7 @@
 import datasets
 import torch
 import multiprocessing
+import warnings
 
 import numpy as np
 
@@ -15,14 +16,18 @@ def balanced_train_subsets(dataset_name='zh-plus/tiny-imagenet',
                            processor_name='facebook/vit-mae-base',
                            total_size=100000,
                            seed=42,
-                           train_fraction=0.9
+                           train_fraction=0.9,
+                           split='train'
                            ):
     """Loads balanced subsets of training data, and returns them as datasets
     in memory.
 
-    Does not handle train_fraction of 0 or 1 well.
+    Despite the name, I have extended this to also fetch test set data.
     """
-    dataset = datasets.load_dataset(dataset_name, split='train')
+    if split != 'train':
+        warnings.warn("You are not fetching train data")
+
+    dataset = datasets.load_dataset(dataset_name, split=split)
 
     processor = ViTImageProcessor.from_pretrained(processor_name,
                                                   do_convert_rgb=True,
@@ -32,6 +37,9 @@ def balanced_train_subsets(dataset_name='zh-plus/tiny-imagenet',
                                                   )
 
     def process_images_in_mem(dataset, inds):
+        if len(inds) == 0:
+            return None
+
         img_np = [processor(dataset[i]['image'])['pixel_values'][0]
                   for i in inds]
         images = torch.from_numpy(np.stack(img_np))

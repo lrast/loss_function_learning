@@ -18,9 +18,9 @@ activity_data:
 loss_model:
   _name_: gradient
   params:
-    num_hidden_layers: 6
+    num_transformer_layers: 6
+    num_fc_layers: 2
     step_size: 100.
-    only_first: False
     lr: 5e-5
 
 train:
@@ -33,3 +33,7 @@ debug:
 hydra:
   run:
     dir: experiments_loss/${now:%Y-%m-%d\(%H:%M:%S\)}-${train.run_name}
+
+  sweep:
+    dir: experiments_loss/sweeps/${now:%Y-%m-%d\(%H:%M:%S\)}-${train.run_name}
+    subdir: ${hydra.job.num}
