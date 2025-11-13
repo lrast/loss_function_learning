@@ -76,7 +76,7 @@ class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
              3. Both models expect torch tensors pixel encoded as uint8
     """
     def __init__(self, classifier_hidden_layers=2, randomized_CLS=False,
-                 classifier_kwargs={}, embedding_kwargs={}):
+                 **kwargs):
         super().__init__()
 
         # Processor for the vit model
@@ -93,12 +93,12 @@ class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
         # Embedding model
         self.embedding = CustomMAE.from_pretrained("facebook/vit-mae-base",
                                                    randomized_CLS=randomized_CLS,
-                                                   **embedding_kwargs)
+                                                   **kwargs)
 
-        _ = classifier_kwargs.setdefault('num_labels', 200)
         class_config = ViTConfig.from_pretrained("google/vit-base-patch16-224",
                                                  num_hidden_layers=classifier_hidden_layers,
-                                                 **classifier_kwargs
+                                                 num_labels=200,
+                                                 **kwargs
                                                  )
         self.classifier = AutoModelForImageClassification.from_config(class_config)
         del self.classifier.vit._modules['embeddings']
