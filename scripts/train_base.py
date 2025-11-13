@@ -4,6 +4,7 @@ import gc
 import torch
 import os
 import wandb
+import shutil
 
 from omegaconf import DictConfig
 from hydra.core.hydra_config import HydraConfig
@@ -34,20 +35,24 @@ def main(cfg: DictConfig):
         else:
             model = ClassifierWithTTA.from_pretrained(input_dir / 'best', **cfg.model)
 
-        train_cfg['load_best_model_at_end'] = True
-
         trainer = get_trainer(model, images_train, images_val,
-                              output_dir=output_dir,
+                              output_dir=output_dir / 'working',
+                              load_best_model_at_end=True,
                               **train_cfg)
         trainer.train()
 
-        best_model_dir = os.path.join(output_dir, "best")
-        trainer.save_model(best_model_dir)
+        # for safety: load the trained model state into the current model
+        _ = model.load_state_dict(trainer.model.state_dict(), strict=False)
+
+        model.save_pretrained(output_dir / "best")
         wandb.finish()
 
         # Cleanup
+        shutil.rmtree(output_dir / 'working')
         model.to('cpu')
+        trainer.model.to('cpu')
         del model
+        del trainer
         gc.collect()
         try:
             torch.mps.empty_cache()
@@ -78,6 +83,7 @@ def main(cfg: DictConfig):
 
     if not cfg.train.decoder_sync.disable:
         # Sync decoder
+        print('sync train')
         sync_directory = base_directory / 'sync'
         train_and_cleanup(decoder_synchronization_training, working_directory, sync_directory,
                           cfg.train.decoder_sync)
