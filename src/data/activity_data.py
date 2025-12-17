@@ -6,8 +6,106 @@ import torch
 from torch.utils.data import IterableDataset
 
 
-class BatchRecorder:
-    """BatchRecorder: records input, gradient pairs for the module specified"""
+class CLSEmbeddingDataset(IterableDataset):
+    """Dateset of CLS token embeddings
+    """
+    def __init__(self, classication_model, raw_inputs,
+                 repeats=50, return_labels=True,
+                 batch_size=8, shuffle=True, seed=42, device=None
+                 ):
+        super(ActivityGradientDataset).__init__()
+
+        self.classication_model = classication_model.to(device)
+        self.raw_inputs = raw_inputs
+
+        self.repeats = repeats
+        self.return_labels = return_labels
+
+        # Setup activity hooks
+        self.CLS_tokens = None
+        hh = classication_model.embedding.vit.layernorm.register_forward_hook(self.recording_hook)
+        self.hook_handle = hh
+
+        # Batching parameters
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.device = device
+
+        self.gen = torch.Generator()
+        self.gen.manual_seed(seed)
+
+    def recording_hook(self, module, input, output):
+        self.CLS_tokens = output[:, 0, :].detach().clone().cpu()
+
+    def __iter__(self):
+        if self.shuffle:
+            inds = torch.randperm(len(self.raw_inputs), generator=self.gen)
+        else:
+            inds = torch.arange(len(self.raw_inputs))
+
+        batches = [inds[i: i+self.batch_size].tolist() 
+                   for i in range(0, len(self.raw_inputs), self.batch_size)
+                   ]
+
+        for batch_inds in batches:
+            # Forward and backward passes through the network
+            images, labels = self.raw_inputs[batch_inds]
+            if self.repeats == 1:
+                preds = self.classication_model.forward(images.to(self.device)
+                                                        ).logits.argmax(1)
+                activity = self.CLS_tokens
+
+            else:  # loop through the images individually, batching each repeat
+                preds = []
+                activity = []
+
+                for i in range(images.shape[0]):
+                    repeated = images[i: i+1].expand(self.repeats, -1, -1, -1)
+
+                    curr_preds = self.classication_model.forward(repeated.to(self.device)
+                                                                 ).logits.argmax(1)
+
+                    activity.append(self.CLS_tokens[None, :])
+                    preds.append(curr_preds[None, :])
+
+                activity = torch.cat(activity)
+                preds = torch.cat(preds)
+
+            if self.return_labels:
+                yield activity, labels.cpu(), preds.detach().cpu()
+            else:
+                yield activity
+
+    def __del__(self):
+        """Cleanup the hooks"""
+        self.hook_handle.remove()
+        del self.CLS_tokens
+
+
+class ActivityGradientDataDict:
+    """Activity-gradient datasets: training and validation
+    """
+    def __init__(self, classication_model, module, train_data, val_data=None, **kwargs):
+        # Initialize classication_model hooks
+        self.recorder = BatchGradientRecorder(module)
+        self.datasets = {
+            "train": ActivityGradientDataset(classication_model, self.recorder,
+                                             train_data, return_labels=False,
+                                             **kwargs),
+        }
+        if val_data is not None:
+            self.datasets["val"] = ActivityGradientDataset(classication_model,
+                                                           self.recorder,
+                                                           val_data,
+                                                           return_labels=True,
+                                                           **kwargs)
+
+    def __getitem__(self, key):
+        return self.datasets[key]
+
+
+class BatchGradientRecorder:
+    """BatchGradientRecorder: records input, gradient pairs for the module specified"""
     def __init__(self, module):
         self.batch = None
         self.hooks = module.register_forward_hook(self.hook_fn)
@@ -31,28 +129,6 @@ class BatchRecorder:
 
     def __del__(self):
         self.cleanup()
-
-
-class ActivityGradientDataDict:
-    """Activity-gradient datasets: training and validation
-    """
-    def __init__(self, classication_model, module, train_data, val_data=None, **kwargs):
-        # Initialize classication_model hooks
-        self.recorder = BatchRecorder(module)
-        self.datasets = {
-            "train": ActivityGradientDataset(classication_model, self.recorder,
-                                             train_data, return_labels=False,
-                                             **kwargs),
-        }
-        if val_data is not None:
-            self.datasets["val"] = ActivityGradientDataset(classication_model,
-                                                           self.recorder,
-                                                           val_data,
-                                                           return_labels=True,
-                                                           **kwargs)
-
-    def __getitem__(self, key):
-        return self.datasets[key]
 
 
 class ActivityGradientDataset(IterableDataset):

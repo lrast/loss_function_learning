@@ -12,6 +12,8 @@ from torchvision.transforms.v2 import Normalize, Compose, ToDtype
 from safetensors import safe_open
 from typing import Optional
 
+from ..utilities.samplers import normal_sampler, constant_sampler
+
 
 class CustomMAE(ViTMAEForPreTraining):
     """ MAE wrapped that performs
@@ -23,31 +25,34 @@ class CustomMAE(ViTMAEForPreTraining):
         super().__init__(*args, **kwargs)
         self.randomized_CLS = randomized_CLS
 
+        # special cases for backward compatiblity - subject to removal
+        if randomized_CLS is True:
+            self.randomized_CLS = normal_sampler
+
+        elif randomized_CLS == 'debug':
+            default_token = self.vit.embeddings.cls_token.data
+            self.randomized_CLS = lambda embed: constant_sampler(default_token, embed)
+
     def forward(self, pixel_values):
-        """ Full encode-decode cycle on the images """
+        """ Full encode-decode cycle on the images
+        Used for TTA
+        """
         outputs = super().forward(pixel_values)
         # add auxilliary loss functions here
         return outputs
 
     def embedding(self, pixel_values):
-        """ Run just the forward embedding step of the MAE """
+        """Run just the forward embedding step of the MAE.
+        Used for downsteam applications
+        """
         self.disable_masking()
 
         if not self.randomized_CLS:
             return self.vit(pixel_values).last_hidden_state
         else:
             # we need to dig into the guts of the model to randomize cls tokens
-            dtype = pixel_values.dtype
             patch_embeddings = self.vit.embeddings.patch_embeddings(pixel_values)
-            batch_size, _, hidden_size = patch_embeddings.shape
-
-            if self.randomized_CLS == 'debug':
-                default_token = self.vit.embeddings.cls_token.data
-                cls_token = default_token.repeat((batch_size, 1, 1))
-
-            else:
-                cls_token = torch.randn(batch_size, 1, hidden_size,
-                                        device=self.device, dtype=dtype)
+            cls_token = self.randomized_CLS(patch_embeddings)
 
             embedding = torch.cat((cls_token, patch_embeddings), 1)
             position_embeddings = self.vit.embeddings.position_embeddings
@@ -73,7 +78,7 @@ class ClassifierWithTTA(torch.nn.Module, PyTorchModelHubMixin):
         Used as follows:
              1. This model is trained and used as a classifier.
              2. TTA is performed by training the embedding model directly.
-             3. Both models expect torch tensors pixel encoded as uint8
+             3. This model expects torch tensors pixel-encoded as uint8
     """
     def __init__(self, classifier_hidden_layers=2, randomized_CLS=False,
                  **kwargs):

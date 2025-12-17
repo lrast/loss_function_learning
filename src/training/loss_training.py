@@ -4,10 +4,10 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint
 
 
-def make_trainer(max_epochs=10, run_name='debug', dirpath='debug'):
+def make_trainer(num_train_epochs=10, run_name='debug', dirpath='debug'):
     """"Set up PyTorch Lightning Trainer for loss function models"""
     trainer_args = {
-        'max_epochs': max_epochs,
+        'max_epochs': num_train_epochs,
         'accelerator': 'auto',
         'log_every_n_steps': 20,
         'enable_progress_bar': True,

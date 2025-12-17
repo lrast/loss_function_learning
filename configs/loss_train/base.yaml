@@ -24,7 +24,7 @@ loss_model:
     lr: 5e-5
 
 train:
-  max_epochs: 10
+  num_train_epochs: 10
   run_name: debug
 
 debug:

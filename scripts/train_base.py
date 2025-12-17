@@ -11,7 +11,8 @@ from hydra.core.hydra_config import HydraConfig
 
 from src.models.TTA_model import ClassifierWithTTA
 from src.data.image_data import balanced_train_subsets
-from src.training.TTA_training import probing_trainer, full_trainer_classification, \
+from src.training.base_training import probing_trainer, \
+                                       full_trainer_classification, \
                                        decoder_synchronization_training
 from pathlib import Path
 
