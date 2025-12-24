@@ -33,7 +33,8 @@ default_config = {
         "params": {},
     },
     "train": {
-        "batch_size": 100
+        "batch_size": 100,
+        "preprocess": None
     },
     "hydra": {"run": {"dir": 'activity_analysis/${now:%Y-%m-%d_%H_%M_%S}_${mode}'}}
 }
@@ -88,10 +89,27 @@ def main(cfg: DictConfig) -> None:
         model_registry = {'deepsets': DeepSets,
                           'deepsetsfoundation': DeepSetsFoundation}
 
+        def filter_activity(data_dict, mode='correct_single'):
+            if mode != 'correct_single':
+                raise NotImplementedError('Other filters not implemented')
+
+            correct_preds = data_dict['predictions'].mode(1).values == data_dict['gts']
+            single_counts = torch.tensor([len(row.unique()) == 1
+                                         for row in data_dict['predictions']])
+
+            activity = data_dict['activity'][correct_preds & single_counts]
+            correct_outs = correct_preds[correct_preds & single_counts].to(torch.float)
+            return activity, correct_outs
+
         data_dict = torch.load(cfg.data.file_name)
 
-        correct_outs = (data_dict['predictions'].mode(1).values == data_dict['gts']).to(torch.float)
-        full_ds = torch.utils.data.TensorDataset(data_dict['activity'], correct_outs)
+        if cfg.train.preprocess is None:
+            activity = data_dict['activity']
+            correct_outs = (data_dict['predictions'].mode(1).values == data_dict['gts']).to(torch.float)
+        else:
+            activity, correct_outs = filter_activity(data_dict, cfg.train.preprocess)
+
+        full_ds = torch.utils.data.TensorDataset(activity, correct_outs)
 
         activityAnalyzer = model_registry[cfg.model.type.lower()](**cfg.model.params)
 
