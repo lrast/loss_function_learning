@@ -9,13 +9,14 @@ from torch.utils.data import IterableDataset
 class CLSEmbeddingDataset(IterableDataset):
     """Dateset of CLS token embeddings
     """
-    def __init__(self, classication_model, raw_inputs,
+    def __init__(self, classification_model, raw_inputs,
+                 layer_name='embedding.vit.layernorm',
                  repeats=50, return_labels=True,
                  batch_size=8, shuffle=True, seed=42, device=None
                  ):
         super(ActivityGradientDataset).__init__()
 
-        self.classication_model = classication_model.to(device)
+        self.classification_model = classification_model.to(device)
         self.raw_inputs = raw_inputs
 
         self.repeats = repeats
@@ -23,8 +24,8 @@ class CLSEmbeddingDataset(IterableDataset):
 
         # Setup activity hooks
         self.CLS_tokens = None
-        hh = classication_model.embedding.vit.layernorm.register_forward_hook(self.recording_hook)
-        self.hook_handle = hh
+        module_dict = {k: v for k, v in classification_model.named_modules()}
+        self.hook_handle = module_dict[layer_name].register_forward_hook(self.recording_hook)
 
         # Batching parameters
         self.batch_size = batch_size
@@ -48,11 +49,10 @@ class CLSEmbeddingDataset(IterableDataset):
                    ]
 
         for batch_inds in batches:
-            # Forward and backward passes through the network
             images, labels = self.raw_inputs[batch_inds]
             if self.repeats == 1:
-                preds = self.classication_model.forward(images.to(self.device)
-                                                        ).logits.argmax(1)
+                preds = self.classification_model.forward(images.to(self.device)
+                                                          ).logits.argmax(1)
                 activity = self.CLS_tokens
 
             else:  # loop through the images individually, batching each repeat
@@ -62,8 +62,8 @@ class CLSEmbeddingDataset(IterableDataset):
                 for i in range(images.shape[0]):
                     repeated = images[i: i+1].expand(self.repeats, -1, -1, -1)
 
-                    curr_preds = self.classication_model.forward(repeated.to(self.device)
-                                                                 ).logits.argmax(1)
+                    curr_preds = self.classification_model.forward(repeated.to(self.device)
+                                                                   ).logits.argmax(1)
 
                     activity.append(self.CLS_tokens[None, :])
                     preds.append(curr_preds[None, :])
@@ -85,16 +85,16 @@ class CLSEmbeddingDataset(IterableDataset):
 class ActivityGradientDataDict:
     """Activity-gradient datasets: training and validation
     """
-    def __init__(self, classication_model, module, train_data, val_data=None, **kwargs):
-        # Initialize classication_model hooks
+    def __init__(self, classification_model, module, train_data, val_data=None, **kwargs):
+        # Initialize classification_model hooks
         self.recorder = BatchGradientRecorder(module)
         self.datasets = {
-            "train": ActivityGradientDataset(classication_model, self.recorder,
+            "train": ActivityGradientDataset(classification_model, self.recorder,
                                              train_data, return_labels=False,
                                              **kwargs),
         }
         if val_data is not None:
-            self.datasets["val"] = ActivityGradientDataset(classication_model,
+            self.datasets["val"] = ActivityGradientDataset(classification_model,
                                                            self.recorder,
                                                            val_data,
                                                            return_labels=True,
@@ -133,17 +133,17 @@ class BatchGradientRecorder:
 
 class ActivityGradientDataset(IterableDataset):
     """Dateset of activity and loss function gradients for a given module
-    classication_model: parent classication_model containing module of interest
+    classification_model: parent classification_model containing module of interest
     recorder: an activity / gradient recorder object
-    raw_inputs: inputs to parent classication_model to iterate over
+    raw_inputs: inputs to parent classification_model to iterate over
     """
-    def __init__(self, classication_model, recorder, raw_inputs,
+    def __init__(self, classification_model, recorder, raw_inputs,
                  batch_size=8, shuffle=True, seed=42,
                  device=None, return_labels=False
                  ):
         super(ActivityGradientDataset).__init__()
 
-        self.classication_model = classication_model.to(device)
+        self.classification_model = classification_model.to(device)
         self.raw_inputs = raw_inputs
 
         self.recorder = recorder
@@ -171,7 +171,7 @@ class ActivityGradientDataset(IterableDataset):
             for batch_inds in batches:
                 # Forward and backward passes through the network
                 images, labels = self.raw_inputs[batch_inds]
-                outs = self.classication_model.forward(images.to(self.device),
+                outs = self.classification_model.forward(images.to(self.device),
                                                        labels=labels.to(self.device))
                 outs.loss.backward()
 

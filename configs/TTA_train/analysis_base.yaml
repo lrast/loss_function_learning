@@ -8,12 +8,9 @@ hydra:
     dir: .
   output_subdir: null
 
-
 analysis:
   name: accuracy
   params: {}
 
 tracked_parameters: null
 stage: sync
-
-

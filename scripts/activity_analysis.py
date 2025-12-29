@@ -1,4 +1,5 @@
-# script for internal activity analyzer training and data creation
+# script for data creation training on models used to analyze CLS token distributions
+# current state: a bit hacky: reuses config items differently depending on the more
 
 import torch
 
@@ -22,10 +23,11 @@ import hydra
 default_config = {
     "mode": 'data_gen',
     "data": {
-        "split": "val",
+        "split": 'val',
         "train_fraction": 0.9,
         "file_name": 'activity_data.pt',
-        "shuffle": True
+        "shuffle": True,
+        "layer_name": 'embedding.vit.layernorm',
     },
     "model": {
         "type": 'deepsets',
@@ -61,7 +63,9 @@ def main(cfg: DictConfig) -> None:
 
         full_model = ClassifierWithTTA.from_pretrained(cfg.model.ckpt_dir)
 
-        activity_dataset = CLSEmbeddingDataset(full_model, image_data, return_labels=True,
+        activity_dataset = CLSEmbeddingDataset(full_model, image_data,
+                                               layer_name=cfg.data.layer_name,
+                                               return_labels=True,
                                                device='mps', shuffle=cfg.data.shuffle)
 
         activity = []
