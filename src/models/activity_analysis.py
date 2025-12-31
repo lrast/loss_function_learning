@@ -33,8 +33,8 @@ class DeepSets(pl.LightningModule):
                  phi_dropout=0.1,
                  hidden_rho=[128, 64],
                  rho_dropout=0.7,
-                 weight_decay=0.1,
-                 loss='classification',
+                 weight_decay=0.05,
+                 loss_weights=[1., 1.],
                  pooling='mean',
                  **kwargs):
         super().__init__()
@@ -45,11 +45,9 @@ class DeepSets(pl.LightningModule):
         self.phi = MLP([input_dim] + hidden_phi, dropout_p=phi_dropout)
 
         # ρ : classifier on pooled representation
-        self.rho = MLP([hidden_phi[-1]] + hidden_rho + [1], dropout_p=rho_dropout)
+        self.rho = MLP([hidden_phi[-1]] + hidden_rho + [2], dropout_p=rho_dropout)
 
-        loss_registry = {'classification': nn.BCELoss()}
-
-        self.loss = loss_registry[loss]
+        self.loss = nn.CrossEntropyLoss(weight=torch.tensor(loss_weights))
 
     def forward(self, x):
         """
@@ -89,10 +87,11 @@ class DeepSets(pl.LightningModule):
         x, correct_classification = batch
 
         predictions = self.forward(x)
-        correctness_prediction = (predictions > 0.5).to(int)
+        correctness_prediction = predictions.argmax(1)
 
         accuracy, accuracy_correct, accuracy_incorrect, \
-            incorrect_f1 = metrics(correctness_prediction, correct_classification)
+            incorrect_f1 = metrics(correctness_prediction.detach().cpu(),
+                                   correct_classification.detach().cpu())
 
         self.log('eval/accuracy', accuracy)
         self.log('eval/accuracy_correct', accuracy_correct)
@@ -103,7 +102,7 @@ class DeepSets(pl.LightningModule):
         x, correct_classification = batch
 
         predictions = self.forward(x)
-        correctness_prediction = (predictions > 0.5).to(int)
+        correctness_prediction = predictions.argmax(1)
 
         accuracy, accuracy_correct, accuracy_incorrect, \
             incorrect_f1 = metrics(correctness_prediction, correct_classification)

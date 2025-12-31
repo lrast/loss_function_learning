@@ -105,13 +105,23 @@ def main(cfg: DictConfig) -> None:
             correct_outs = correct_preds[correct_preds & single_counts].to(torch.float)
             return activity, correct_outs
 
+        def mean_subtract(data_dict):
+            activity = data_dict['activity']
+            correct_outs = (data_dict['predictions'].mode(1).values == data_dict['gts']).to(torch.float)
+
+            activity = activity - activity.mean(1)[:, None, :].expand(activity.shape)
+            return activity, correct_outs
+
+        preprocess_registry = {'filter_correct': filter_activity,
+                               'mean_subtract': mean_subtract}
+
         data_dict = torch.load(cfg.data.file_name)
 
         if cfg.train.preprocess is None:
             activity = data_dict['activity']
             correct_outs = (data_dict['predictions'].mode(1).values == data_dict['gts']).to(torch.float)
         else:
-            activity, correct_outs = filter_activity(data_dict, cfg.train.preprocess)
+            activity, correct_outs = preprocess_registry[cfg.train.preprocess](data_dict)
 
         full_ds = torch.utils.data.TensorDataset(activity, correct_outs)
 

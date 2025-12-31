@@ -56,6 +56,64 @@ def corrupted_accuracy(checkpoint_dir, data_dir='dataset_files', **kwargs
         return [{}]
 
 
+def corrupted_accuracy_sample_cls_tokens(checkpoint_dir,
+                                         cls_token_dataset,
+                                         data_dir='dataset_files',
+                                         **kwargs
+                                         ) -> list[dict]:
+    """ Accuracy on the corrupted generalization sets with cls tokens sampled
+    from the previous uncorrupted run data.
+
+    Current written very specifically for the imediate experiment
+    """
+    model = ClassifierWithTTA.from_pretrained(checkpoint_dir)
+    model = model.to('mps')
+    model = model.eval()
+    module = model.embedding.vit.layernorm
+
+    activity_samples = torch.load(cls_token_dataset)['activity'].view(-1, 768)
+    N = activity_samples.shape[0]
+
+    def randomization_hook(module, input, output):
+        copied_output = output.clone()
+        batch, tokens, dims = copied_output.shape
+
+        cls_tokens = activity_samples[torch.randperm(N)[0:batch]]
+        copied_output[:, 0, :] = cls_tokens.to(copied_output.device)
+
+        return copied_output
+
+    # iterate through different corruptions
+    output_rows = []
+    for datafile in Path(data_dir).glob('*.npz'):
+        if datafile.stem == 'uncorrupted_valid':
+            corruption_name = 'uncorrupted'
+        else:
+            corruption_name = re.search(r'corrupted_(.*)_severity', str(datafile)
+                                        ).group(1)
+        print(f'\n {corruption_name}:')
+        test_set = dataset_from_file(filename=datafile, device='mps')
+
+        # raw corrupted
+        accuracy_baseline = evaluate_accuracy(model, test_set, num_workers=0)
+        accuracy_baseline.update({'corruption': corruption_name, 'randomize': False})
+
+        output_rows.append(accuracy_baseline)
+
+        handle = module.register_forward_hook(randomization_hook)
+        accuracy_randomized = evaluate_accuracy(model, test_set, num_workers=0)
+        accuracy_randomized.update({'corruption': corruption_name, 'randomize': True})
+        output_rows.append(accuracy_randomized)
+        handle.remove()
+
+        print("Forward Hooks:", module._forward_hooks)
+        print("Forward Pre-Hooks:", module._forward_pre_hooks)
+
+        del test_set
+
+    return output_rows
+
+
 def TTA_accuracy(checkpoint_dir):
     """ Accuracy on the corrupted generalization sets, with TTA """
     pass
